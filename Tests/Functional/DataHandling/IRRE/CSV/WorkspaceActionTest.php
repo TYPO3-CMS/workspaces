@@ -1,5 +1,5 @@
 <?php
-namespace TYPO3\CMS\Workspaces\Tests\Functional\DataHandling\InlineRelationalRecordEditing\ForeignField;
+namespace TYPO3\CMS\Workspaces\Tests\Functional\DataHandling\IRRE\CSV;
 
 /***************************************************************
  * Copyright notice
