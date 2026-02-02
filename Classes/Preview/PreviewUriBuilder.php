@@ -137,6 +137,125 @@ readonly class PreviewUriBuilder
         return $previewUri;
     }
 
+    /**
+     * Generates a shareable workspace preview link for any element.
+     *
+     * This creates a preview URL with an ADMCMD_prev token that allows viewing
+     * workspace content without requiring a backend login. The token is stored
+     * in the sys_preview table and has a configurable lifetime.
+     *
+     * @param string $table Table to be used
+     * @param int $uid Uid of the version(!) record
+     * @param int $languageId The language ID for the preview
+     */
+    public function buildUriForElementWithToken(string $table, int $uid, int $languageId = 0, ?array $liveRecord = null, ?array $versionRecord = null): string
+    {
+        if ($liveRecord === null) {
+            $liveRecord = BackendUtility::getLiveVersionOfRecord($table, $uid);
+        }
+        if ($versionRecord === null) {
+            $versionRecord = BackendUtility::getRecord($table, $uid);
+        }
+        if ($liveRecord === null || $versionRecord === null) {
+            return '';
+        }
+
+        // Determine the preview page ID
+        $previewPageId = $this->resolvePreviewPageId($table, $liveRecord, $versionRecord);
+        if ($previewPageId === 0) {
+            return '';
+        }
+
+        // Collect additional query parameters for non-page records
+        $additionalParameters = [];
+        if ($table !== 'pages') {
+            $additionalParameters = $this->resolvePreviewQueryParameters($table, $previewPageId, $liveRecord, $versionRecord);
+        }
+
+        $previewKeyword = $this->compilePreviewKeyword();
+        try {
+            $site = $this->siteFinder->getSiteByPageId($previewPageId);
+            try {
+                $language = $site->getLanguageById($languageId);
+            } catch (\InvalidArgumentException) {
+                $language = $site->getDefaultLanguage();
+            }
+            $routeParameters = array_merge(
+                ['ADMCMD_prev' => $previewKeyword, '_language' => $language],
+                $additionalParameters
+            );
+            $uri = $site->getRouter()->generateUri($previewPageId, $routeParameters, '');
+            return (string)$uri;
+        } catch (SiteNotFoundException | InvalidRouteArgumentsException) {
+            return '';
+        }
+    }
+
+    /**
+     * Resolves the preview page ID for a given record.
+     */
+    protected function resolvePreviewPageId(string $table, array $liveRecord, array $versionRecord): int
+    {
+        if ($table === 'pages') {
+            // For pages, use the live record's UID (or l10n_parent for translations)
+            return (int)($liveRecord['l10n_parent'] ?: ($liveRecord['t3ver_oid'] ?: $liveRecord['uid']));
+        }
+
+        // For other records, start with the record's page ID
+        $previewPageId = (int)(empty($versionRecord['pid']) ? $liveRecord['pid'] : $versionRecord['pid']);
+
+        $pageTsConfig = BackendUtility::getPagesTSconfig($previewPageId);
+
+        // Check options.workspaces.previewPageId configuration
+        if (!empty($pageTsConfig['options.']['workspaces.']['previewPageId.'][$table]) || !empty($pageTsConfig['options.']['workspaces.']['previewPageId'])) {
+            if (!empty($pageTsConfig['options.']['workspaces.']['previewPageId.'][$table])) {
+                $previewConfiguration = $pageTsConfig['options.']['workspaces.']['previewPageId.'][$table];
+            } else {
+                $previewConfiguration = $pageTsConfig['options.']['workspaces.']['previewPageId'];
+            }
+            $previewValueParts = explode(':', $previewConfiguration, 2);
+            if (count($previewValueParts) === 2 && $previewValueParts[0] === 'field') {
+                $previewPageId = (int)($liveRecord[$previewValueParts[1]] ?? 0);
+            } else {
+                $previewPageId = (int)$previewConfiguration;
+            }
+        } elseif (isset($pageTsConfig['TCEMAIN.']['preview.'][$table . '.']['previewPageId'])) {
+            // Check TCEMAIN.preview.<table>.previewPageId configuration
+            $previewPageId = (int)$pageTsConfig['TCEMAIN.']['preview.'][$table . '.']['previewPageId'];
+        }
+
+        return $previewPageId;
+    }
+
+    /**
+     * Resolves additional query parameters for non-page record previews.
+     */
+    protected function resolvePreviewQueryParameters(string $table, int $previewPageId, array $liveRecord, array $versionRecord): array
+    {
+        $linkParameters = [];
+        $pageTsConfig = BackendUtility::getPagesTSconfig($previewPageId);
+        $backendPreviewConfiguration = $pageTsConfig['TCEMAIN.']['preview.'][$table . '.'] ?? [];
+
+        // Map record data to GET parameters
+        if (isset($backendPreviewConfiguration['fieldToParameterMap.'])) {
+            foreach ($backendPreviewConfiguration['fieldToParameterMap.'] as $field => $parameterName) {
+                $value = $versionRecord[$field] ?? '';
+                if ($field === 'uid') {
+                    $value = $versionRecord['t3ver_oid'] === 0 ? $versionRecord['uid'] : $versionRecord['t3ver_oid'];
+                }
+                $linkParameters[$parameterName] = $value;
+            }
+        }
+
+        // Add/override parameters by configuration
+        if (isset($backendPreviewConfiguration['additionalGetParameters.'])) {
+            $additionalGetParameters = GeneralUtility::removeDotsFromTS($backendPreviewConfiguration['additionalGetParameters.']);
+            $linkParameters = array_replace($linkParameters, $additionalGetParameters);
+        }
+
+        return $linkParameters;
+    }
+
     protected function createPreviewUriForElement(string $table, int $uid, ?array $liveRecord = null, ?array $versionRecord = null): ?UriInterface
     {
         if ($liveRecord === null) {

@@ -35,7 +35,6 @@ use TYPO3\CMS\Core\Resource\Exception\FileDoesNotExistException;
 use TYPO3\CMS\Core\Resource\FileReference;
 use TYPO3\CMS\Core\Resource\ProcessedFile;
 use TYPO3\CMS\Core\Resource\ResourceFactory;
-use TYPO3\CMS\Core\Routing\UnableToLinkToPageException;
 use TYPO3\CMS\Core\Schema\Capability\TcaSchemaCapability;
 use TYPO3\CMS\Core\Schema\Field\FieldTypeInterface;
 use TYPO3\CMS\Core\Schema\SearchableSchemaFieldsCollector;
@@ -424,12 +423,15 @@ readonly class GridDataService
                 $versionArray['allowedAction_view'] = !$isDeletedPage && $viewUrl;
                 // Generate preview URL with ADMCMD_prev keyword for QR code (works without backend login)
                 $versionArray['previewUrl'] = '';
-                if (!$isDeletedPage && $viewUrl) {
-                    try {
-                        $versionArray['previewUrl'] = $this->previewUriBuilder->buildUriForPage($pageId, $languageValue);
-                    } catch (UnableToLinkToPageException) {
-                        // Page cannot be previewed, keep empty
-                    }
+                $isDeletedRecord = VersionState::tryFrom($versionRecord['t3ver_state'] ?? 0) === VersionState::DELETE_PLACEHOLDER;
+                if (!$isDeletedRecord && $viewUrl) {
+                    $versionArray['previewUrl'] = $this->previewUriBuilder->buildUriForElementWithToken(
+                        $table,
+                        (int)$record['uid'],
+                        $languageValue,
+                        $origRecord,
+                        $versionRecord
+                    );
                 }
                 $versionArray['allowedAction_edit'] = $isRecordTypeAllowedToModify && !$isDeletedPage;
                 $versionArray['allowedAction_versionPageOpen'] = $this->isPageModuleAllowed() && !$isDeletedPage;
